@@ -38,7 +38,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ compact = fa
             : 'px-3 py-1.5 text-xs sm:text-sm bg-blue-600 hover:bg-blue-500 text-white border-transparent'
         }`}
       >
-        <Download className="w-4 h-4 animate-bounce" />
+        <Download className="w-4 h-4 text-[#4f8cff]" />
       </button>
 
       {/* Guide Modal for browsers where beforeinstallprompt isn't directly triggered or for iOS Safari */}

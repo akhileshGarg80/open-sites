@@ -30,21 +30,100 @@ export const PLATFORMS: Platform[] = [
   { key: 'custom', name: 'Custom Domain (Full URL)', suffix: '' },
 ];
 
-export function toUrl(raw: string, platformKey: string): string {
-  let v = raw.trim().toLowerCase()
-    .replace(/^https?:\/\//i, '')
-    .replace(/\/.*$/, '')
-    .replace(/\s+/g, '');
+/**
+ * Automatically detects which platform an input domain belongs to.
+ * e.g. "ssc2026-mu.vercel.app/analyse" -> "vercel"
+ * "my-app.onrender.com" -> "render"
+ * "mysite.com/test" -> "custom"
+ */
+export function detectPlatform(input: string): string | null {
+  const clean = input.trim().toLowerCase().replace(/^https?:\/\//i, '');
+  const slashIdx = clean.search(/[/?#]/);
+  const host = slashIdx === -1 ? clean : clean.substring(0, slashIdx);
 
-  if (!v || !/^[a-z0-9.-]+$/.test(v)) return '';
-
-  const plat = PLATFORMS.find((p) => p.key === platformKey);
-  const s = plat ? plat.suffix : '';
-
-  if (!v.includes('.')) {
-    if (!s) return '';
-    v += s;
+  for (const plat of PLATFORMS) {
+    if (plat.suffix && host.endsWith(plat.suffix)) {
+      return plat.key;
+    }
   }
 
-  return 'https://' + v;
+  if (host.includes('.')) {
+    return 'custom';
+  }
+
+  return null;
+}
+
+/**
+ * Universal URL resolver:
+ * Converts user input into a complete, working HTTPS URL.
+ * Supports:
+ * - "ssc2026-mu.vercel.app/analyse" (without https://)
+ * - "ssc2026-mu/analyse" (under Vercel platform)
+ * - "https://ssc2026-mu.vercel.app/analyse"
+ * - "mywebsite.org/path?key=value#hash"
+ */
+export function toUrl(raw: string, platformKey: string): string {
+  let trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  // Extract explicit protocol if user provided it
+  let protocol = 'https://';
+  if (/^http:\/\//i.test(trimmed)) {
+    protocol = 'http://';
+    trimmed = trimmed.replace(/^http:\/\//i, '');
+  } else if (/^https:\/\//i.test(trimmed)) {
+    protocol = 'https://';
+    trimmed = trimmed.replace(/^https:\/\//i, '');
+  }
+
+  // Split into host (and optional port) vs path/query/hash
+  const slashIdx = trimmed.search(/[/?#]/);
+  let hostPart = slashIdx === -1 ? trimmed : trimmed.substring(0, slashIdx);
+  const pathPart = slashIdx === -1 ? '' : trimmed.substring(slashIdx);
+
+  hostPart = hostPart.trim().toLowerCase().replace(/\s+/g, '');
+  if (!hostPart) return '';
+
+  // Check if host already ends with ANY known platform suffix
+  const matchedPlat = PLATFORMS.find((p) => p.suffix && hostPart.endsWith(p.suffix));
+
+  if (matchedPlat) {
+    // Host already contains a valid platform suffix (e.g. ssc2026-mu.vercel.app)
+    // Do not append any additional suffix!
+  } else if (hostPart.includes('.')) {
+    // Host already contains a dot (e.g. custom domain "example.com" or "sub.site.io")
+    // Keep host as-is!
+  } else {
+    // Host has no dots (e.g. "ssc2026-mu")
+    // Append the selected platform's suffix if it has one
+    const plat = PLATFORMS.find((p) => p.key === platformKey);
+    const suffix = plat?.suffix ? plat.suffix.toLowerCase() : '';
+    if (suffix) {
+      hostPart += suffix;
+    }
+  }
+
+  // Format path/query part cleanly
+  let formattedPath = pathPart.trim();
+  if (formattedPath && !formattedPath.startsWith('/') && !formattedPath.startsWith('?') && !formattedPath.startsWith('#')) {
+    formattedPath = '/' + formattedPath;
+  }
+
+  return protocol + hostPart + formattedPath;
+}
+
+/**
+ * Extracts host, path, and clean display name for header title & modals
+ */
+export function extractHostAndPath(url: string): { host: string; path: string; fullClean: string } {
+  try {
+    const clean = url.replace(/^https?:\/\//i, '');
+    const slashIdx = clean.search(/[/?#]/);
+    const host = slashIdx === -1 ? clean : clean.substring(0, slashIdx);
+    const path = slashIdx === -1 ? '' : clean.substring(slashIdx);
+    return { host, path, fullClean: clean };
+  } catch {
+    return { host: url, path: '', fullClean: url };
+  }
 }

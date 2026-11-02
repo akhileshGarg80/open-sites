@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Heart } from 'lucide-react';
-import { PLATFORMS, toUrl } from './platforms';
+import { Heart, ExternalLink } from 'lucide-react';
+import { PLATFORMS, toUrl, extractHostAndPath, detectPlatform } from './platforms';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { LikedSitesModal, LikedSite } from './components/LikedSitesModal';
+import { getWebsiteScreenshotUrl } from './utils/screenshot';
 
 export default function App() {
   const [siteQuery, setSiteQuery] = useState<string>('');
@@ -17,7 +18,15 @@ export default function App() {
   const [likedSites, setLikedSites] = useState<LikedSite[]>(() => {
     try {
       const saved = localStorage.getItem('site_opener_liked_sites');
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed: LikedSite[] = JSON.parse(saved);
+        return parsed.map((site) => ({
+          ...site,
+          screenshotUrl: site.screenshotUrl || getWebsiteScreenshotUrl(site.url),
+          path: site.path || extractHostAndPath(site.url).path,
+        }));
+      }
+      return [];
     } catch {
       return [];
     }
@@ -65,10 +74,10 @@ export default function App() {
     }
 
     setCurrentUrl(url);
-    setProgressWidth(70);
+    setProgressWidth(80);
 
-    const host = url.replace('https://', '');
-    document.title = host;
+    const { fullClean } = extractHostAndPath(url);
+    document.title = fullClean;
 
     try {
       window.history.replaceState(null, '', `?site=${encodeURIComponent(raw.trim())}&p=${encodeURIComponent(platKey)}`);
@@ -84,7 +93,19 @@ export default function App() {
     setProgressWidth(100);
     setTimeout(() => {
       setProgressWidth(0);
-    }, 300);
+    }, 150);
+  };
+
+  const handleInputChange = (val: string) => {
+    // Strip leading https:// or http:// if pasted by user
+    const clean = val.replace(/^https?:\/\//i, '');
+    setSiteQuery(clean);
+
+    // Auto-detect platform if domain suffix matches
+    const detected = detectPlatform(clean);
+    if (detected) {
+      setPlatform(detected);
+    }
   };
 
   const handlePlatformChange = (newPlat: string) => {
@@ -109,9 +130,10 @@ export default function App() {
     }
   };
 
-  // Check if currently open site is liked
+  // Instant check if currently open site is liked
   const isCurrentLiked = currentUrl ? likedSites.some((s) => s.url === currentUrl) : false;
 
+  // Ultra-fast instant toggle for like button
   const toggleLikeCurrentSite = () => {
     if (!currentUrl) {
       if (siteQuery.trim()) {
@@ -121,30 +143,34 @@ export default function App() {
       }
       return;
     }
-    const host = currentUrl.replace('https://', '');
+
+    const { host, path, fullClean } = extractHostAndPath(currentUrl);
 
     if (isCurrentLiked) {
       setLikedSites((prev) => prev.filter((s) => s.url !== currentUrl));
       setJustLiked(false);
     } else {
+      const screenshot = getWebsiteScreenshotUrl(currentUrl);
       const newLiked: LikedSite = {
         id: `like-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         url: currentUrl,
         host: host,
-        query: siteQuery || host,
+        path: path && path !== '/' ? path : undefined,
+        query: siteQuery || fullClean,
         platform: platform,
         likedAt: Date.now(),
+        screenshotUrl: screenshot,
       };
       setLikedSites((prev) => [newLiked, ...prev]);
       setJustLiked(true);
-      setTimeout(() => setJustLiked(false), 700);
+      setTimeout(() => setJustLiked(false), 900);
     }
   };
 
   const handleSelectLikedSite = (site: LikedSite) => {
-    setSiteQuery(site.query);
+    setSiteQuery(site.query || site.url.replace(/^https?:\/\//i, ''));
     setPlatform(site.platform);
-    openSite(site.query, site.platform);
+    openSite(site.url, site.platform);
     setShowLikedModal(false);
   };
 
@@ -156,25 +182,35 @@ export default function App() {
     setLikedSites([]);
   };
 
+  const handleRefreshScreenshot = (id: string) => {
+    setLikedSites((prev) =>
+      prev.map((site) => {
+        if (site.id === id) {
+          const fresh = `${getWebsiteScreenshotUrl(site.url)}&timestamp=${Date.now()}`;
+          return { ...site, screenshotUrl: fresh };
+        }
+        return site;
+      })
+    );
+  };
+
   const currentPlatformObj = PLATFORMS.find((p) => p.key === platform) || PLATFORMS[0];
   const suffix = currentPlatformObj.suffix;
-  const placeholder = suffix ? `site ka naam, jaise gitscan` : `poora domain, jaise mysite.com`;
+  const placeholder = suffix
+    ? `site ka naam ya domain (jaise ssc2026-mu${suffix}/analyse)`
+    : `poora domain ya link (jaise mysite.com/analyse)`;
 
   return (
     <div className="flex flex-col h-screen w-screen bg-[#0f1115] text-[#e8eaf0] overflow-hidden select-none font-sans">
-      {/* Topnav with Searchbar, Integrated Dropdown, Like History, and External Button */}
-      <header className="flex-none h-14 bg-[#171a21] border-b border-[#262b36] z-20 flex items-center gap-2 px-2.5 sm:px-3">
-        {/* Search Field with Prefix, Input, and Integrated Dropdown */}
-        <div className="flex-1 min-w-0 flex items-center h-10 bg-[#0f1115] border border-[#262b36] focus-within:border-[#4f8cff] rounded-xl pl-3 pr-1 transition-all">
-          <span className="text-[#8b93a7] text-sm hidden sm:inline select-none whitespace-nowrap mr-0.5">
-            https://
-          </span>
-
+      {/* Topnav: Input takes largest width, compact dropdown inside, then Like History, Open in New Tab, Download PWA */}
+      <header className="flex-none h-14 bg-[#171a21] border-b border-[#262b36] z-20 flex items-center gap-1.5 px-2 sm:px-3">
+        {/* Largest Section: Search Bar with Input & Compact Dropdown */}
+        <div className="flex-1 min-w-0 flex items-center h-10 bg-[#0f1115] border border-[#262b36] focus-within:border-[#4f8cff] rounded-xl pl-2.5 sm:pl-3 pr-1 transition-all">
           <input
             ref={inputRef}
             type="text"
             value={siteQuery}
-            onChange={(e) => setSiteQuery(e.target.value)}
+            onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 openSite(siteQuery, platform);
@@ -185,15 +221,15 @@ export default function App() {
             autoCapitalize="off"
             spellCheck="false"
             enterKeyHint="go"
-            className="flex-1 min-w-0 bg-transparent text-[#e8eaf0] text-sm focus:outline-none placeholder:text-[#555d6f] px-1"
+            className="flex-1 min-w-0 bg-transparent text-[#e8eaf0] text-xs sm:text-sm focus:outline-none placeholder:text-[#555d6f] px-1"
           />
 
-          {/* Integrated Platform Dropdown Button inside Search Bar */}
+          {/* Compact Platform Dropdown inside search bar */}
           <select
             aria-label="Platform"
             value={platform}
             onChange={(e) => handlePlatformChange(e.target.value)}
-            className="bg-[#171a21] hover:bg-[#202530] text-[#4f8cff] font-semibold text-xs sm:text-sm rounded-lg h-[30px] px-2 outline-none border-0 cursor-pointer max-w-[130px] sm:max-w-[180px] truncate transition ml-1"
+            className="bg-[#171a21] hover:bg-[#202530] text-[#4f8cff] font-semibold text-[11px] sm:text-xs rounded-lg h-[28px] px-1.5 outline-none border border-[#262b36] cursor-pointer max-w-[80px] sm:max-w-[115px] truncate transition ml-1 flex-none"
           >
             {PLATFORMS.map((p) => (
               <option key={p.key} value={p.key} className="bg-[#171a21] text-[#e8eaf0]">
@@ -203,46 +239,46 @@ export default function App() {
           </select>
         </div>
 
-        {/* Top Nav Like History Button */}
+        {/* 1. Like History Button */}
         <button
           onClick={() => setShowLikedModal(true)}
-          className={`h-10 px-2.5 flex items-center justify-center gap-1.5 rounded-xl border transition active:scale-95 flex-none ${
+          className={`h-10 px-2.5 flex items-center justify-center gap-1.5 rounded-xl border transition active:scale-95 flex-none cursor-pointer ${
             likedSites.length > 0
-              ? 'bg-[#0f1115] hover:bg-[#262b36] text-red-400 border-[#262b36]'
-              : 'bg-[#0f1115] hover:bg-[#262b36] text-slate-400 border-[#262b36]'
+              ? 'bg-[#0f1115] hover:bg-[#262b36] text-[#ff2d55] border-pink-500/30'
+              : 'bg-[#0f1115] hover:bg-[#262b36] text-[#ff2d55] border-[#262b36]'
           }`}
-          title="Liked Sites History dekhein"
+          title="Liked Sites History"
         >
-          <Heart className={`w-4 h-4 ${likedSites.length > 0 ? 'fill-red-500 text-red-500' : ''}`} />
+          <Heart className={`w-4 h-4 ${likedSites.length > 0 ? 'fill-[#ff2d55] text-[#ff2d55]' : 'text-[#ff2d55]'}`} />
           {likedSites.length > 0 && (
-            <span className="text-xs font-bold text-white font-mono bg-red-500/20 px-1.5 py-0.5 rounded-md border border-red-500/30">
+            <span className="text-xs font-bold text-white font-mono bg-pink-500/20 px-1.5 py-0.5 rounded-md border border-pink-500/30">
               {likedSites.length}
             </span>
           )}
         </button>
 
-        {/* Open in New Tab Button */}
+        {/* 2. Open in Other Web / New Tab Icon (↗) */}
         <button
           onClick={handleOpenExternal}
-          className="h-10 w-10 flex items-center justify-center rounded-xl bg-[#0f1115] hover:bg-[#262b36] active:scale-95 text-[#e8eaf0] border border-[#262b36] transition font-bold text-base flex-none"
+          className="h-10 w-10 flex items-center justify-center rounded-xl bg-[#0f1115] hover:bg-[#262b36] active:scale-95 text-[#e8eaf0] border border-[#262b36] transition flex-none cursor-pointer"
           title="Naye tab me kholo (↗)"
         >
-          ↗
+          <ExternalLink className="w-4 h-4 text-slate-300" />
         </button>
 
-        {/* PWA Download / Install Button */}
+        {/* 3. Download Icon (Jo download / install hone ke baad gayab ho jata hai) */}
         <PWAInstallButton compact={true} />
       </header>
 
       {/* Main Stage: 100% Clean */}
       <main className="flex-1 relative w-full h-[calc(100vh-56px)] bg-[#0f1115] overflow-hidden">
-        {/* Animated Progress Bar */}
+        {/* Fast Progress Bar */}
         <div
-          className="absolute top-0 left-0 h-[2px] bg-[#4f8cff] transition-all duration-300 z-30"
+          className="absolute top-0 left-0 h-[2px] bg-[#4f8cff] transition-all duration-150 z-30"
           style={{ width: `${progressWidth}%` }}
         />
 
-        {/* Fullscreen Iframe (Visible when site is loaded) */}
+        {/* Fullscreen Iframe */}
         {currentUrl ? (
           <iframe
             ref={frameRef}
@@ -254,7 +290,6 @@ export default function App() {
             className="w-full h-full border-0 bg-white block"
           />
         ) : (
-          /* Pure Clean Empty Stage: No extra text or clutter */
           <div className="w-full h-full bg-[#0f1115]" />
         )}
 
@@ -266,6 +301,7 @@ export default function App() {
             onRemoveSite={handleRemoveLikedSite}
             onClearAll={handleClearAllLiked}
             onClose={() => setShowLikedModal(false)}
+            onRefreshScreenshot={handleRefreshScreenshot}
           />
         )}
 
@@ -273,27 +309,36 @@ export default function App() {
         <OfflineIndicator />
       </main>
 
-      {/* Bottom Left Pure Floating Like Icon (Zero background, only icon) */}
-      <button
-        onClick={toggleLikeCurrentSite}
-        className="fixed bottom-5 left-5 z-[999] p-2 bg-transparent border-0 outline-none cursor-pointer transition-all duration-300 active:scale-75 flex items-center justify-center"
-        title={
-          currentUrl
-            ? isCurrentLiked
-              ? 'Liked! (Click karke unlike karein)'
-              : 'Is site ko Like karein'
-            : 'Liked Sites List dekhein'
-        }
-        aria-label="Like button"
-      >
-        <Heart
-          className={`w-7 h-7 transition-all duration-300 ${
-            isCurrentLiked
-              ? 'fill-[#ff2d55] text-[#ff2d55] scale-115 drop-shadow-[0_2px_14px_rgba(255,45,85,0.95)]'
-              : 'fill-transparent text-white/90 hover:text-[#ff2d55] stroke-[2.2] drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)] hover:scale-110'
-          } ${justLiked ? 'scale-130' : ''}`}
-        />
-      </button>
+      {/* Bottom Left Ultra Superfast Floating Like Button */}
+      <div className="fixed bottom-5 left-5 z-[999] flex items-center gap-1.5">
+        <button
+          onClick={toggleLikeCurrentSite}
+          className="p-1.5 bg-transparent border-0 outline-none cursor-pointer flex items-center justify-center relative active:scale-90 transition-transform duration-100"
+          title={
+            currentUrl
+              ? isCurrentLiked
+                ? 'Liked (Click to unlike)'
+                : 'Like site'
+              : 'Liked Sites'
+          }
+          aria-label="Like button"
+        >
+          <Heart
+            className={`w-6 h-6 transition-colors duration-150 ${
+              isCurrentLiked
+                ? 'fill-[#ff2d55] text-[#ff2d55]'
+                : 'fill-transparent text-[#ff2d55] hover:text-pink-400 stroke-[2]'
+            }`}
+          />
+        </button>
+
+        {/* Instant, quiet feedback pill */}
+        {justLiked && (
+          <div className="px-2 py-0.5 rounded-md bg-[#171a21]/95 backdrop-blur-sm text-slate-200 text-[11px] border border-white/10 shadow animate-in fade-in duration-100 select-none">
+            Saved
+          </div>
+        )}
+      </div>
     </div>
   );
 }
